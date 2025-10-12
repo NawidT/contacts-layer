@@ -10,21 +10,45 @@ import {
   Platform,
 } from 'react-native';
 import * as Contacts from 'expo-contacts';
+import { useRouter } from 'expo-router';
 import { Contact } from '../types/contact';
 import { mockContacts } from '../data/mockContacts';
-import { aiRankingContacts } from '../utils/aiRankingContacts';
+import { aiRankingContacts, getInitialHashtags } from '../utils/aiRankingContacts';
 
 export default function Index() {
+  const router = useRouter();
   const [contacts, setContacts] = useState<Contact[]>(mockContacts);
   const [displayedContacts, setDisplayedContacts] = useState<Contact[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [hasPermission, setHasPermission] = useState(false);
+  const [firstLoad, setFirstLoad] = useState(true);
 
   useEffect(() => {
     requestStoreContactsPermission();
-    // Initialize with all contacts (alphabetically sorted, max 20)
+    // Initialize with all contacts (alphabetically sorted)
     setDisplayedContacts(aiRankingContacts(contacts, ''));
+    // Handle fetching and processing contacts
+    if (hasPermission) {
+      fetchProcessContacts();
+    }
   }, []);
+
+  const fetchProcessContacts = async () => {
+    const { data } = await Contacts.getContactsAsync({
+      fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers, Contacts.Fields.Emails],
+    });
+    const formattedContacts: Contact[] = data.map(contact => ({
+      id: contact.id,
+      name: contact.name || 'Unknown', 
+      phoneNumber: contact.phoneNumbers?.[0]?.number || '',
+      email: contact.emails?.[0]?.email,
+    }));
+    setContacts(formattedContacts);
+    formattedContacts.forEach(async (contact) => {
+      const contactWithHashtags = await getInitialHashtags(contact);
+      setDisplayedContacts([...displayedContacts, contactWithHashtags]);
+    });
+  };
 
   const requestStoreContactsPermission = async () => {
     try {
@@ -35,16 +59,6 @@ export default function Index() {
           'Permission Granted',
           'Contact permissions have been granted. Loading your contacts.'
         );
-        const { data } = await Contacts.getContactsAsync({
-          fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers, Contacts.Fields.Emails],
-        });
-        const formattedContacts: Contact[] = data.map(contact => ({
-          id: contact.id,
-          name: contact.name || 'Unknown',
-          phoneNumber: contact.phoneNumbers?.[0]?.number || '',
-          email: contact.emails?.[0]?.email,
-        }));
-        setContacts(formattedContacts);
       } else {
         Alert.alert(
           'Permission Denied',
@@ -61,12 +75,26 @@ export default function Index() {
   };
 
   const handleSearch = () => {
+    if (firstLoad) {
+      setFirstLoad(false);
+    }
     const rankedContacts = aiRankingContacts(contacts, searchQuery);
     setDisplayedContacts(rankedContacts);
   };
 
+  const handleContactPress = (contact: Contact) => {
+    router.push({
+      pathname: '/contact-detail',
+      params: { contact: JSON.stringify(contact) }
+    });
+  };
+
   const renderContactItem = ({ item }: { item: Contact }) => (
-    <View style={styles.contactCard}>
+    <TouchableOpacity 
+      style={styles.contactCard}
+      onPress={() => handleContactPress(item)}
+      activeOpacity={0.7}
+    >
       <View style={styles.contactAvatar}>
         <Text style={styles.contactAvatarText}>
           {item.name.charAt(0).toUpperCase()}
@@ -77,51 +105,108 @@ export default function Index() {
         <Text style={styles.contactPhone}>{item.phoneNumber}</Text>
         {item.email && <Text style={styles.contactEmail}>{item.email}</Text>}
       </View>
-    </View>
+    </TouchableOpacity>
   );
 
-  return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Contacts</Text>
-        <Text style={styles.headerSubtitle}>
-          {displayedContacts.length} contact{displayedContacts.length !== 1 ? 's' : ''}
-        </Text>
+  return firstLoad ? (
+      <View style={styles.firstLoadContainer}>
+        <View style={styles.firstLoadContent}>
+          <TextInput
+            style={styles.firstLoadSearchInput}
+            placeholder="Search contacts..."
+            placeholderTextColor="#999"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onSubmitEditing={handleSearch}
+            returnKeyType="search"
+          />
+          <TouchableOpacity style={styles.firstLoadSearchButton} onPress={handleSearch}>
+            <Text style={styles.searchButtonText}>Search</Text>
+          </TouchableOpacity>
+          <Text style={styles.firstLoadText}>
+            Use AI to navigate your phone book
+          </Text>
+        </View>
       </View>
+    ) : (
+      <View style={styles.container}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Contacts</Text>
+          <Text style={styles.headerSubtitle}>
+            {displayedContacts.length} contact{displayedContacts.length !== 1 ? 's' : ''}
+          </Text>
+        </View>
 
-      {/* Contact List */}
-      <FlatList
-        data={displayedContacts}
-        renderItem={renderContactItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-      />
-
-      {/* Search Bar at Bottom */}
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search contacts..."
-          placeholderTextColor="#999"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onSubmitEditing={handleSearch}
-          returnKeyType="search"
+        {/* Contact List */}
+        <FlatList
+          data={displayedContacts}
+          renderItem={renderContactItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
         />
-        <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
-          <Text style={styles.searchButtonText}>Search</Text>
-        </TouchableOpacity>
+
+        {/* Search Bar at Bottom */}
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search contacts..."
+            placeholderTextColor="#999"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onSubmitEditing={handleSearch}
+            returnKeyType="search"
+          />
+          <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
+            <Text style={styles.searchButtonText}>Search</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
-  );
-}
+    )};
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+  },
+  firstLoadContainer: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  firstLoadContent: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '85%',
+    maxWidth: 400,
+  },
+  firstLoadSearchInput: {
+    width: '100%',
+    height: 48,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    fontSize: 16,
+    color: '#000',
+    marginBottom: 16,
+  },
+  firstLoadSearchButton: {
+    width: '100%',
+    backgroundColor: '#007AFF',
+    borderRadius: 24,
+    paddingHorizontal: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 48,
+    marginBottom: 20,
+  },
+  firstLoadText: {
+    color: '#666',
+    fontSize: 16,
+    textAlign: 'center',
   },
   header: {
     paddingTop: Platform.OS === 'ios' ? 60 : 40,

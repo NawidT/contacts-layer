@@ -4,6 +4,8 @@ export interface Contact {
   phoneNumber: string;
   email?: string;
   imageUrl?: string;
+  company?: string;
+  hashtags?: string[];
 }
 
 

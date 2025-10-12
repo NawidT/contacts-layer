@@ -8,7 +8,6 @@ An iPhone app built with Expo that provides AI-powered contact search and rankin
 - 👥 **Pre-loaded Contacts**: Comes with 26 mock contacts for testing
 - 🔍 **Smart Search**: Search bar at the bottom of the screen for easy access
 - 🤖 **AI Ranking**: Ranks contacts based on search relevance (currently using alphabetical ordering as a mock implementation)
-- 📊 **Limited Results**: Shows a maximum of 20 contacts at a time
 - 💾 **In-Memory Cache**: Stores contacts in internal memory cache
 
 ## Project Structure
@@ -29,12 +28,11 @@ app/
 
 ## How It Works
 
-1. **On App Launch**: The app requests permission to access contacts and displays the first 20 contacts in alphabetical order
+1. **On App Launch**: The app requests permission to access contacts and displays the contacts in alphabetical order
 2. **Search**: Type a query in the search bar at the bottom and tap "Search" or press return
 3. **AI Ranking**: The app filters and ranks contacts based on the search query:
    - Matches against name, phone number, or email
    - Currently sorts results alphabetically (placeholder for future AI implementation)
-   - Returns up to 20 most relevant contacts
 
 ## Running the App
 
