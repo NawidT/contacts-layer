@@ -1,20 +1,31 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Text,
   View,
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  ScrollView,
   Platform,
   Image,
+  ScrollView,
+  KeyboardAvoidingView,
+  Keyboard,
+  Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Contact } from '../types/contact';
+import { setCachedContact } from '../utils/contactCache';
 
 export default function ContactDetail() {
   const params = useLocalSearchParams();
   const router = useRouter();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const inputRefs = {
+    name: useRef<View>(null),
+    company: useRef<View>(null),
+    summary: useRef<View>(null),
+    hashtags: useRef<View>(null),
+  };
   
   // Parse the contact data from params
   const initialContact = params.contact ? JSON.parse(params.contact as string) : null;
@@ -22,22 +33,62 @@ export default function ContactDetail() {
   const [name, setName] = useState(initialContact?.name || '');
   const [company, setCompany] = useState(initialContact?.company || '');
   const [imageUrl, setImageUrl] = useState(initialContact?.imageUrl || '');
+  const [summary, setSummary] = useState(initialContact?.summary || '');
   const [hashtagsText, setHashtagsText] = useState(
     initialContact?.hashtags?.join(', ') || ''
   );
 
-  const handleSave = () => {
-    // Here you would typically save to your backend or local storage
-    // For now, just go back
-    router.back();
+  const handleSave = async () => {
+    try {
+      // Save to SQLite cache
+      const phoneNumber = initialContact?.phoneNumber || '';
+      const hashtags = hashtagsText
+        .split(',')
+        .map((tag: string) => tag.trim())
+        .filter((tag: string) => tag)
+        .map((tag: string) => tag.startsWith('#') ? tag : `#${tag}`);
+
+      await setCachedContact(name, phoneNumber, {
+        summary: summary || undefined,
+        hashtags: hashtags.length > 0 ? hashtags : undefined,
+      });
+
+      console.log(`Saved contact data for ${name} to cache`);
+      Keyboard.dismiss();
+      router.back();
+    } catch (error) {
+      console.error('Error saving contact data:', error);
+      Alert.alert('Error', 'Failed to save contact data');
+    }
   };
 
   const getInitials = () => {
     return name ? name.charAt(0).toUpperCase() : '?';
   };
 
+  const scrollToInput = (inputRef: React.RefObject<View | null>) => {
+    setTimeout(() => {
+      if (inputRef.current && scrollViewRef.current) {
+        inputRef.current.measureLayout(
+          scrollViewRef.current as any,
+          (x, y, width, height) => {
+            scrollViewRef.current?.scrollTo({
+              y: y - 20,
+              animated: true,
+            });
+          },
+          () => {}
+        );
+      }
+    }, 100);
+  };
+
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView 
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+    >
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -50,9 +101,12 @@ export default function ContactDetail() {
       </View>
 
       <ScrollView 
+        ref={scrollViewRef}
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
       >
         {/* Avatar Section */}
         <View style={styles.avatarSection}>
@@ -65,20 +119,8 @@ export default function ContactDetail() {
           )}
         </View>
 
-        {/* Image URL Field */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Image URL</Text>
-          <TextInput
-            style={styles.input}
-            value={imageUrl}
-            onChangeText={setImageUrl}
-            placeholder="Enter image URL..."
-            placeholderTextColor="#999"
-          />
-        </View>
-
         {/* Name Field */}
-        <View style={styles.fieldContainer}>
+        <View style={styles.fieldContainer} ref={inputRefs.name}>
           <Text style={styles.fieldLabel}>Name</Text>
           <TextInput
             style={styles.input}
@@ -86,11 +128,12 @@ export default function ContactDetail() {
             onChangeText={setName}
             placeholder="Enter name..."
             placeholderTextColor="#999"
+            onFocus={() => scrollToInput(inputRefs.name)}
           />
         </View>
 
         {/* Company Field */}
-        <View style={styles.fieldContainer}>
+        <View style={styles.fieldContainer} ref={inputRefs.company}>
           <Text style={styles.fieldLabel}>Company</Text>
           <TextInput
             style={styles.input}
@@ -98,11 +141,28 @@ export default function ContactDetail() {
             onChangeText={setCompany}
             placeholder="Enter company..."
             placeholderTextColor="#999"
+            onFocus={() => scrollToInput(inputRefs.company)}
+          />
+        </View>
+
+        {/* Summary Field */}
+        <View style={styles.fieldContainer} ref={inputRefs.summary}>
+          <Text style={styles.fieldLabel}>Summary</Text>
+          <Text style={styles.fieldHelper}>Brief description or notes about this contact</Text>
+          <TextInput
+            style={[styles.input, styles.textArea]}
+            value={summary}
+            onChangeText={setSummary}
+            placeholder="e.g., Met at Google conference, interested in AI startups..."
+            placeholderTextColor="#999"
+            multiline
+            numberOfLines={4}
+            onFocus={() => scrollToInput(inputRefs.summary)}
           />
         </View>
 
         {/* Hashtags Field */}
-        <View style={styles.fieldContainer}>
+        <View style={styles.fieldContainer} ref={inputRefs.hashtags}>
           <Text style={styles.fieldLabel}>Hashtags</Text>
           <Text style={styles.fieldHelper}>Separate hashtags with commas</Text>
           <TextInput
@@ -113,6 +173,7 @@ export default function ContactDetail() {
             placeholderTextColor="#999"
             multiline
             numberOfLines={3}
+            onFocus={() => scrollToInput(inputRefs.hashtags)}
           />
         </View>
 
@@ -123,9 +184,9 @@ export default function ContactDetail() {
             <View style={styles.hashtagsContainer}>
               {hashtagsText
                 .split(',')
-                .map(tag => tag.trim())
-                .filter(tag => tag)
-                .map((tag, index) => (
+                .map((tag: string) => tag.trim())
+                .filter((tag: string) => tag)
+                .map((tag: string, index: number) => (
                   <View key={index} style={styles.hashtagPill}>
                     <Text style={styles.hashtagText}>#{tag}</Text>
                   </View>
@@ -134,7 +195,7 @@ export default function ContactDetail() {
           </View>
         )}
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -179,6 +240,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
+    paddingBottom: 100, // Extra padding at bottom for keyboard
   },
   avatarSection: {
     alignItems: 'center',

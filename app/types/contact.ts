@@ -6,6 +6,7 @@ export interface Contact {
   imageUrl?: string;
   company?: string;
   hashtags?: string[];
+  summary?: string;
 }
 
 

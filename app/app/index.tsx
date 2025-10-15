@@ -13,23 +13,28 @@ import * as Contacts from 'expo-contacts';
 import { useRouter } from 'expo-router';
 import { Contact } from '../types/contact';
 import { mockContacts } from '../data/mockContacts';
-import { aiRankingContacts, getInitialHashtags } from '../utils/aiRankingContacts';
+import { rankingContacts, extractSimpleHashtags, getAITags } from '../utils/aiRankingContacts';
+import { initializeDatabase, getCachedContact } from '../utils/contactCache';
 
 export default function Index() {
   const router = useRouter();
-  const [contacts, setContacts] = useState<Contact[]>(mockContacts);
+  const [contacts, setContacts] = useState<Contact[]>([...mockContacts]);
   const [displayedContacts, setDisplayedContacts] = useState<Contact[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [hasPermission, setHasPermission] = useState(false);
   const [firstLoad, setFirstLoad] = useState(true);
 
   useEffect(() => {
+    // Initialize database on app load
+    initializeDatabase().catch(error => {
+      console.error('Failed to initialize database:', error);
+    });
+    
     requestStoreContactsPermission();
-    // Initialize with all contacts (alphabetically sorted)
-    setDisplayedContacts(aiRankingContacts(contacts, ''));
     // Handle fetching and processing contacts
     if (hasPermission) {
       fetchProcessContacts();
+      setDisplayedContacts(rankingContacts(contacts, ''));
     }
   }, []);
 
@@ -37,17 +42,41 @@ export default function Index() {
     const { data } = await Contacts.getContactsAsync({
       fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers, Contacts.Fields.Emails],
     });
-    const formattedContacts: Contact[] = data.map(contact => ({
-      id: contact.id,
-      name: contact.name || 'Unknown', 
-      phoneNumber: contact.phoneNumbers?.[0]?.number || '',
-      email: contact.emails?.[0]?.email,
-    }));
+    const formattedContacts: Contact[] = await Promise.all(
+      data.map(async (contact) => {
+        const formattedContact: Contact = {
+          id: contact.id,
+          name: contact.name || 'Unknown', 
+          phoneNumber: contact.phoneNumbers?.[0]?.number || '',
+          email: contact.emails?.[0]?.email,
+        };
+
+        // Try to get cached data first
+        try {
+          const cachedData = await getCachedContact(
+            formattedContact.name,
+            formattedContact.phoneNumber
+          );
+          
+          if (cachedData) {
+            formattedContact.hashtags = cachedData.hashtags;
+            formattedContact.summary = cachedData.summary;
+            console.log(`Loaded cached data for ${formattedContact.name}`);
+          } else {
+            // No cache, extract hashtags and cache them
+            formattedContact.hashtags = extractSimpleHashtags(formattedContact);
+            console.log(`Generated hashtags for ${formattedContact.name}: ${formattedContact.hashtags?.join(', ')}`);
+          }
+        } catch (error) {
+          console.error(`Error processing contact ${formattedContact.name}:`, error);
+          // Fallback to simple extraction
+          formattedContact.hashtags = extractSimpleHashtags(formattedContact);
+        }
+
+        return formattedContact;
+      })
+    );
     setContacts(formattedContacts);
-    formattedContacts.forEach(async (contact) => {
-      const contactWithHashtags = await getInitialHashtags(contact);
-      setDisplayedContacts([...displayedContacts, contactWithHashtags]);
-    });
   };
 
   const requestStoreContactsPermission = async () => {
@@ -78,7 +107,7 @@ export default function Index() {
     if (firstLoad) {
       setFirstLoad(false);
     }
-    const rankedContacts = aiRankingContacts(contacts, searchQuery);
+    const rankedContacts = rankingContacts(contacts, searchQuery);
     setDisplayedContacts(rankedContacts);
   };
 
@@ -87,6 +116,10 @@ export default function Index() {
       pathname: '/contact-detail',
       params: { contact: JSON.stringify(contact) }
     });
+  };
+
+  const handleGraphViewPress = () => {
+    router.push('/graph-view');
   };
 
   const renderContactItem = ({ item }: { item: Contact }) => (
@@ -116,12 +149,18 @@ export default function Index() {
             placeholder="Search contacts..."
             placeholderTextColor="#999"
             value={searchQuery}
-            onChangeText={setSearchQuery}
+            onChangeText={(text) => {
+              setSearchQuery(text);
+              handleSearch();
+            }}
             onSubmitEditing={handleSearch}
             returnKeyType="search"
           />
           <TouchableOpacity style={styles.firstLoadSearchButton} onPress={handleSearch}>
             <Text style={styles.searchButtonText}>Search</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.graphViewButton} onPress={handleGraphViewPress}>
+            <Text style={styles.graphViewButtonText}>🌐 View Graph</Text>
           </TouchableOpacity>
           <Text style={styles.firstLoadText}>
             Use AI to navigate your phone book
@@ -130,14 +169,27 @@ export default function Index() {
       </View>
     ) : (
       <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Contacts</Text>
-          <Text style={styles.headerSubtitle}>
-            {displayedContacts.length} contact{displayedContacts.length !== 1 ? 's' : ''}
-          </Text>
+        {/* Search Bar at Top */}
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search contacts..."
+            placeholderTextColor="#999"
+            value={searchQuery}
+            onChangeText={(text) => {
+              setSearchQuery(text);
+              handleSearch();
+            }}
+            onSubmitEditing={handleSearch}
+            returnKeyType="search"
+          />
+          <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
+            <Text style={styles.searchButtonText}>Search</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.graphButton} onPress={handleGraphViewPress}>
+            <Text style={styles.graphButtonText}>🌐</Text>
+          </TouchableOpacity>
         </View>
-
         {/* Contact List */}
         <FlatList
           data={displayedContacts}
@@ -146,21 +198,11 @@ export default function Index() {
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
         />
-
-        {/* Search Bar at Bottom */}
-        <View style={styles.searchContainer}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search contacts..."
-            placeholderTextColor="#999"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={handleSearch}
-            returnKeyType="search"
-          />
-          <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
-            <Text style={styles.searchButtonText}>Search</Text>
-          </TouchableOpacity>
+        {/* Footer */}
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>
+            {displayedContacts.length} contact{displayedContacts.length !== 1 ? 's' : ''}
+          </Text>
         </View>
       </View>
     )};
@@ -228,7 +270,6 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 100, // Extra padding to account for search bar
   },
   contactCard: {
     flexDirection: 'row',
@@ -276,16 +317,26 @@ const styles = StyleSheet.create({
     color: '#999',
   },
   searchContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     flexDirection: 'row',
     padding: 16,
     backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingBottom: 16,
+  },
+  footer: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
-    paddingBottom: Platform.OS === 'ios' ? 34 : 16, // Account for iPhone home indicator
+    alignItems: 'center',
+    paddingBottom: Platform.OS === 'ios' ? 34 : 12, // Account for iPhone home indicator
+  },
+  footerText: {
+    fontSize: 14,
+    color: '#666',
   },
   searchInput: {
     flex: 1,
@@ -309,5 +360,32 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  graphViewButton: {
+    width: '100%',
+    backgroundColor: '#4CAF50',
+    borderRadius: 24,
+    paddingHorizontal: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 48,
+    marginBottom: 20,
+  },
+  graphViewButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  graphButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 48,
+    marginLeft: 8,
+  },
+  graphButtonText: {
+    fontSize: 20,
   },
 });
