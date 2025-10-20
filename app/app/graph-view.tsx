@@ -34,32 +34,36 @@ interface GraphLink extends SimulationLinkDatum<GraphNode> {
   target: string | GraphNode;
 }
 
-const AnimatedSvg = Animated.createAnimatedComponent(Svg);
-
 export default function GraphView() {
   const router = useRouter();
   const [contacts, setContacts] = useState<Contact[]>([...mockContacts]);
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [selectedHashtag, setSelectedHashtag] = useState<string | null>(null);
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [links, setLinks] = useState<GraphLink[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [graphBounds, setGraphBounds] = useState({ 
+    minX: 0, 
+    minY: 0, 
+    maxX: SCREEN_WIDTH, 
+    maxY: SCREEN_HEIGHT 
+  });
 
   // Shared values for pan and zoom
   const scale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
-  const savedScale = useSharedValue(1);
+  const savedScale = useSharedValue(0.2);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
 
+  // Main background
   useEffect(() => {
     loadContacts();
-  }, []);
-
-  useEffect(() => {
     if (contacts.length > 0) {
       buildGraph();
     }
-  }, [contacts]);
+  }, []);
 
   const loadContacts = async () => {
     // For now, just use mock contacts with their pre-defined hashtags
@@ -145,6 +149,27 @@ export default function GraphView() {
       }
       console.log('Graph layout calculated');
 
+      // Calculate bounds of all nodes
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      graphNodes.forEach(node => {
+        if (node.x != null && node.y != null) {
+          minX = Math.min(minX, node.x);
+          minY = Math.min(minY, node.y);
+          maxX = Math.max(maxX, node.x);
+          maxY = Math.max(maxY, node.y);
+        }
+      });
+
+      // Add padding
+      const padding = 100;
+      minX -= padding;
+      minY -= padding;
+      maxX += padding;
+      maxY += padding;
+
+      // Update graph bounds
+      setGraphBounds({ minX, minY, maxX, maxY });
+
       // Set nodes and links once with final positions
       setNodes([...graphNodes]);
       setLinks(graphLinks);
@@ -228,12 +253,13 @@ export default function GraphView() {
       {/* Graph Canvas */}
       <GestureDetector gesture={composedGesture}>
         <View style={styles.graphContainer}>
-          <AnimatedSvg
-            width={SCREEN_WIDTH}
-            height={SCREEN_HEIGHT}
-            style={animatedStyle}
-          >
-            <G>
+          <Animated.View style={animatedStyle}>
+            <Svg
+              width={graphBounds.maxX - graphBounds.minX}
+              height={graphBounds.maxY - graphBounds.minY}
+              viewBox={`${graphBounds.minX} ${graphBounds.minY} ${graphBounds.maxX - graphBounds.minX} ${graphBounds.maxY - graphBounds.minY}`}
+            >
+              <G>
               {/* Draw links */}
               {links.map((link, index) => {
                 const sourceNode = nodes.find(
@@ -312,7 +338,7 @@ export default function GraphView() {
                         y={node.y - 12}
                         width={textWidth + 10}
                         height="24"
-                        fill="#FF6B6B"
+                        fill="#D1D5DB"
                         stroke="#fff"
                         strokeWidth="1.5"
                         rx="4"
@@ -332,8 +358,9 @@ export default function GraphView() {
                   );
                 }
               })}
-            </G>
-          </AnimatedSvg>
+              </G>
+            </Svg>
+          </Animated.View>
           
           {/* Loading indicator */}
           {isLoading && (
@@ -360,7 +387,6 @@ export default function GraphView() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   header: {
     flexDirection: 'row',
@@ -369,9 +395,8 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingBottom: 16,
     paddingHorizontal: 20,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    backgroundColor: '#fafafa',
+    zIndex: 1000,
   },
   backButton: {
     padding: 8,
