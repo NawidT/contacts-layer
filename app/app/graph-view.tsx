@@ -7,6 +7,7 @@ import {
   Text,
   Platform,
   ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import Svg, { Circle, Rect, Line, Text as SvgText, G } from 'react-native-svg';
 import { useRouter } from 'expo-router';
@@ -37,8 +38,9 @@ interface GraphLink extends SimulationLinkDatum<GraphNode> {
 export default function GraphView() {
   const router = useRouter();
   const [contacts, setContacts] = useState<Contact[]>([...mockContacts]);
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
-  const [selectedHashtag, setSelectedHashtag] = useState<string | null>(null);
+  const [highlightedHashtags, setHighlightedHashtags] = useState<string[]>([]);
+  const [highlightedContacts, setHighlightedContacts] = useState<Contact[]>([]);
+  const [hashtagToContacts, setHashtagToContacts] = useState<Map<string, Contact[]>>(new Map());
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [links, setLinks] = useState<GraphLink[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -48,6 +50,8 @@ export default function GraphView() {
     maxX: SCREEN_WIDTH, 
     maxY: SCREEN_HEIGHT 
   });
+  const [firstBuild, setFirstBuild] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Shared values for pan and zoom
   const scale = useSharedValue(1);
@@ -57,13 +61,26 @@ export default function GraphView() {
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
 
-  // Main background
+  // Main background function, loads contacts and constructs graph 
   useEffect(() => {
     loadContacts();
     if (contacts.length > 0) {
       buildGraph();
     }
   }, []);
+
+  // Secondary background function, creates hashtagToContacts
+  useEffect(() => {
+    if (contacts.length > 0) {
+      const newHashtagToContacts = new Map<string, Contact[]>();
+      contacts.forEach((contact) => {
+        contact.hashtags?.forEach((hashtag) => {
+          newHashtagToContacts.set(hashtag, [...(newHashtagToContacts.get(hashtag) || []), contact]);
+        });
+      });
+      setHashtagToContacts(newHashtagToContacts);
+    }
+  }, [firstBuild]);
 
   const loadContacts = async () => {
     // For now, just use mock contacts with their pre-defined hashtags
@@ -175,17 +192,94 @@ export default function GraphView() {
       setLinks(graphLinks);
       setIsLoading(false);
     }, 50); // Small delay to allow UI to update
+    setFirstBuild(true);
   };
 
   const handleContactPress = (contact: Contact) => {
-    router.push({
-      pathname: '/contact-detail',
-      params: { contact: JSON.stringify(contact) },
-    });
+    // If contact is already selected, go to detail. Otherwise, highlight contact and their hashtags.
+    if (highlightedContacts.some(c => c.id === contact.id)) {
+      router.push({
+        pathname: '/contact-detail',
+        params: { contact: JSON.stringify(contact) },
+      });
+    } else {
+      setHighlightedContacts([contact]);
+      setHighlightedHashtags(contact.hashtags || []);
+    }
+  };
+
+  const handleHashtagPress = (hashtag: string) => {
+    const newHashTags = [...highlightedHashtags, hashtag];
+    setHighlightedHashtags(newHashTags);
+    setHighlightedContacts(newHashTags.flatMap(h => hashtagToContacts.get(h) || []));
   };
 
   const handleBackPress = () => {
+    setHighlightedContacts([]);
+    setHighlightedHashtags([]);
     router.back();
+  };
+
+  const centerOnNode = (node: GraphNode) => {
+    if (node.x != null && node.y != null) {
+      // Calculate the translation needed to center the node
+      const centerX = SCREEN_WIDTH / 2;
+      const centerY = SCREEN_HEIGHT / 2;
+      
+      // Account for current scale
+      const currentScale = scale.value;
+      
+      // Calculate new translation to center the node
+      const newTranslateX = centerX - node.x * currentScale;
+      const newTranslateY = centerY - node.y * currentScale;
+      
+      // Animate to the new position
+      translateX.value = withSpring(newTranslateX);
+      translateY.value = withSpring(newTranslateY);
+      savedTranslateX.value = newTranslateX;
+      savedTranslateY.value = newTranslateY;
+    }
+  };
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    
+    if (!query.trim()) {
+      setHighlightedContacts([]);
+      setHighlightedHashtags([]);
+      return;
+    }
+    
+    const lowerQuery = query.toLowerCase();
+    
+    // Search for matching contact
+    const matchingContact = contacts.find(contact => 
+      contact.name.toLowerCase().includes(lowerQuery)
+    );
+    
+    if (matchingContact) {
+      const contactNode = nodes.find(n => n.id === `contact-${matchingContact.id}`);
+      if (contactNode) {
+        setHighlightedContacts([matchingContact]);
+        setHighlightedHashtags(matchingContact.hashtags || []);
+        centerOnNode(contactNode);
+        return;
+      }
+    }
+    
+    // Search for matching hashtag
+    const matchingHashtag = Array.from(hashtagToContacts.keys()).find(hashtag =>
+      hashtag.toLowerCase().includes(lowerQuery)
+    );
+    
+    if (matchingHashtag) {
+      const hashtagNode = nodes.find(n => n.id === `hashtag-${matchingHashtag}`);
+      if (hashtagNode) {
+        setHighlightedHashtags([matchingHashtag]);
+        setHighlightedContacts(hashtagToContacts.get(matchingHashtag) || []);
+        centerOnNode(hashtagNode);
+      }
+    }
   };
 
   // Pinch gesture for zooming
@@ -250,6 +344,27 @@ export default function GraphView() {
         </TouchableOpacity>
       </View>
 
+      {/* Search Bar */}
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search contacts or hashtags..."
+          placeholderTextColor="#999"
+          value={searchQuery}
+          onChangeText={handleSearch}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity 
+            style={styles.clearButton} 
+            onPress={() => handleSearch('')}
+          >
+            <Text style={styles.clearButtonText}>✕</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       {/* Graph Canvas */}
       <GestureDetector gesture={composedGesture}>
         <View style={styles.graphContainer}>
@@ -300,7 +415,7 @@ export default function GraphView() {
                         cy={node.y}
                         r="30"
                         fill="#007AFF"
-                        stroke="#fff"
+                        stroke={highlightedContacts.some(c => c.id === node.contact?.id) ? "#FF0000" : "#fff"}
                         strokeWidth="2"
                         onPress={() => node.contact && handleContactPress(node.contact)}
                       />
@@ -339,9 +454,10 @@ export default function GraphView() {
                         width={textWidth + 10}
                         height="24"
                         fill="#D1D5DB"
-                        stroke="#fff"
+                        stroke={highlightedHashtags.includes(node.name) ? "#FF0000" : "#fff"}
                         strokeWidth="1.5"
                         rx="4"
+                        onPress={() => handleHashtagPress(node.name)}
                       />
                       <SvgText
                         x={node.x}
@@ -418,6 +534,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#007AFF',
     fontWeight: '600',
+  },
+  searchContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: '#fafafa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    zIndex: 999,
+  },
+  searchInput: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  clearButton: {
+    position: 'absolute',
+    right: 28,
+    top: 20,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#ccc',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  clearButtonText: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: 'bold',
   },
   graphContainer: {
     flex: 1,
