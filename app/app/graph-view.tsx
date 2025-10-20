@@ -16,6 +16,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  ReduceMotion
 } from 'react-native-reanimated';
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide, SimulationNodeDatum, SimulationLinkDatum } from 'd3-force';
 import { Contact } from '../types/contact';
@@ -57,7 +58,7 @@ export default function GraphView() {
   const scale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
-  const savedScale = useSharedValue(0.2);
+  const savedScale = useSharedValue(1);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
 
@@ -66,6 +67,10 @@ export default function GraphView() {
     loadContacts();
     if (contacts.length > 0) {
       buildGraph();
+    }
+    // center on the first contact
+    if (nodes.length > 0) {
+      centerOnNode(nodes[0]);
     }
   }, []);
 
@@ -97,20 +102,14 @@ export default function GraphView() {
       const graphLinks: GraphLink[] = [];
       const hashtagSet = new Set<string>();
 
-      // Create contact nodes and collect unique hashtags
-      const centerX = SCREEN_WIDTH / 2;
-      const centerY = SCREEN_HEIGHT / 2;
-      const radius = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) / 3;
-
-      contacts.forEach((contact, index) => {
-        const angle = (index / contacts.length) * 2 * Math.PI;
+      // Create contact nodes - let D3 calculate positions
+      contacts.forEach((contact) => {
         graphNodes.push({
           id: `contact-${contact.id}`,
           type: 'contact',
           name: contact.name,
-          x: centerX + radius * Math.cos(angle),
-          y: centerY + radius * Math.sin(angle),
           contact,
+          // No initial x, y - let D3 handle it
         });
 
         if (contact.hashtags) {
@@ -118,17 +117,14 @@ export default function GraphView() {
         }
       });
 
-      // Create hashtag nodes in inner circle
+      // Create hashtag nodes - let D3 calculate positions
       const hashtagArray = Array.from(hashtagSet);
-      const innerRadius = radius * 0.6;
-      hashtagArray.forEach((tag, index) => {
-        const angle = (index / hashtagArray.length) * 2 * Math.PI;
+      hashtagArray.forEach((tag) => {
         graphNodes.push({
           id: `hashtag-${tag}`,
           type: 'hashtag',
           name: tag,
-          x: centerX + innerRadius * Math.cos(angle),
-          y: centerY + innerRadius * Math.sin(angle),
+          // No initial x, y - let D3 handle it
         });
       });
 
@@ -144,18 +140,18 @@ export default function GraphView() {
         }
       });
 
-      // Set up D3 force simulation and run it synchronously
+      // Set up D3 force simulation with optimized forces
       const simulation = forceSimulation<GraphNode>(graphNodes)
         .force(
           'link',
           forceLink<GraphNode, GraphLink>(graphLinks)
             .id((d) => d.id)
-            .distance(80)
-            .strength(0.5)
+            .distance(100) // Distance between connected nodes
+            .strength(0.7) // Strength of link force (0-1)
         )
-        .force('charge', forceManyBody().strength(-200))
-        .force('center', forceCenter(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2))
-        .force('collision', forceCollide().radius(40))
+        .force('charge', forceManyBody().strength(-300)) // Repulsion between nodes
+        .force('center', forceCenter(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)) // Center the graph
+        .force('collision', forceCollide().radius(45)) // Prevent node overlap
         .stop(); // Don't run automatically
 
       // Run simulation synchronously for fixed iterations
@@ -196,6 +192,7 @@ export default function GraphView() {
   };
 
   const handleContactPress = (contact: Contact) => {
+    console.log('handleContactPress for contact: ', contact.name);
     // If contact is already selected, go to detail. Otherwise, highlight contact and their hashtags.
     if (highlightedContacts.some(c => c.id === contact.id)) {
       router.push({
@@ -205,13 +202,21 @@ export default function GraphView() {
     } else {
       setHighlightedContacts([contact]);
       setHighlightedHashtags(contact.hashtags || []);
+      const contactNode = nodes.find(n => n.id === `contact-${contact.id}`);
+      if (contactNode) {
+        centerOnNode(contactNode);
+      }
     }
   };
 
   const handleHashtagPress = (hashtag: string) => {
-    const newHashTags = [...highlightedHashtags, hashtag];
-    setHighlightedHashtags(newHashTags);
-    setHighlightedContacts(newHashTags.flatMap(h => hashtagToContacts.get(h) || []));
+    console.log('handleHashtagPress for hashtag: ', hashtag);
+    setHighlightedHashtags([hashtag]);
+    setHighlightedContacts(hashtagToContacts.get(hashtag) || []);
+    const hashtagNode = nodes.find(n => n.id === `hashtag-${hashtag}`);
+    if (hashtagNode) {
+      centerOnNode(hashtagNode);
+    }
   };
 
   const handleBackPress = () => {
@@ -222,20 +227,64 @@ export default function GraphView() {
 
   const centerOnNode = (node: GraphNode) => {
     if (node.x != null && node.y != null) {
-      // Calculate the translation needed to center the node
-      const centerX = SCREEN_WIDTH / 2;
-      const centerY = SCREEN_HEIGHT / 2;
-      
-      // Account for current scale
+      // Get current scale
       const currentScale = scale.value;
       
-      // Calculate new translation to center the node
-      const newTranslateX = centerX - node.x * currentScale;
-      const newTranslateY = centerY - node.y * currentScale;
+      // Calculate the SVG dimensions
+      const svgWidth = graphBounds.maxX - graphBounds.minX;
+      const svgHeight = graphBounds.maxY - graphBounds.minY;
       
-      // Animate to the new position
-      translateX.value = withSpring(newTranslateX);
-      translateY.value = withSpring(newTranslateY);
+      // Node position relative to SVG's top-left (accounting for viewBox offset)
+      const nodeRelativeX = node.x - graphBounds.minX;
+      const nodeRelativeY = node.y - graphBounds.minY;
+      
+      // Calculate where we want the node to appear on screen
+      // For X: center of screen width
+      console.log('SCREEN_WIDTH: ', SCREEN_WIDTH);
+      const targetScreenX = SCREEN_WIDTH / 2;
+      // For Y: center of the graph container (which excludes header, search bar)
+      // The graph container fills the remaining space, so calculate its center
+      const headerHeight = Platform.OS === 'ios' ? 100 : 80;
+      const searchBarHeight = 60;
+      const graphContainerHeight = SCREEN_HEIGHT - headerHeight
+      const targetScreenY = graphContainerHeight / 2;
+      
+      // In React Native, scale transforms around the center of the element
+      // SVG center in its own coordinate space
+      const svgCenterX = svgWidth / 2;
+      const svgCenterY = svgHeight / 2;
+      
+      // Node position relative to SVG center
+      const nodeFromCenterX = nodeRelativeX - svgCenterX;
+      const nodeFromCenterY = nodeRelativeY - svgCenterY;
+      
+      // After scaling around center, node offset from center becomes scaled
+      const scaledNodeFromCenterX = nodeFromCenterX * currentScale;
+      const scaledNodeFromCenterY = nodeFromCenterY * currentScale;
+      
+      // Calculate translation needed
+      // Target = SVG center position + scaled node offset from center
+      // So: SVG center position = Target - scaled node offset
+      const svgCenterScreenX = targetScreenX - scaledNodeFromCenterX;
+      const svgCenterScreenY = targetScreenY - scaledNodeFromCenterY;
+      
+      // Translation moves the SVG center from its default position (svgWidth/2, svgHeight/2)
+      const newTranslateX = svgCenterScreenX - svgCenterX;
+      const newTranslateY = svgCenterScreenY - svgCenterY - searchBarHeight - (Platform.OS === 'ios' ? 70 : 50);
+      
+      // Animate to the new position with smooth spring animation
+      const springConfig = {
+        damping: 15, 
+        stiffness: 100, 
+        mass: 1, 
+        overshootClamping: false,
+        restDisplacementThreshold: 0.01,
+        restSpeedThreshold: 0.01,
+        reduceMotion: ReduceMotion.System,
+      };
+      
+      translateX.value = withSpring(newTranslateX, springConfig);
+      translateY.value = withSpring(newTranslateY, springConfig);
       savedTranslateX.value = newTranslateX;
       savedTranslateY.value = newTranslateY;
     }
@@ -282,10 +331,11 @@ export default function GraphView() {
     }
   };
 
-  // Pinch gesture for zooming
+  // Pinch gesture for zooming (scale only, no translation)
   const pinchGesture = Gesture.Pinch()
     .onUpdate((event) => {
-      scale.value = Math.max(0.5, Math.min(savedScale.value * event.scale, 3));
+      const newScale = Math.max(0.5, Math.min(savedScale.value * event.scale, 3));
+      scale.value = newScale;
     })
     .onEnd(() => {
       savedScale.value = scale.value;
@@ -316,11 +366,12 @@ export default function GraphView() {
 
   const resetZoom = () => {
     scale.value = withSpring(1);
-    translateX.value = withSpring(0);
-    translateY.value = withSpring(0);
     savedScale.value = 1;
-    savedTranslateX.value = 0;
-    savedTranslateY.value = 0;
+    // center on random node
+    centerOnNode(nodes[Math.floor(Math.random() * nodes.length)]);
+    setHighlightedContacts([]);
+    setHighlightedHashtags([]);
+    setSearchQuery('');
   };
 
   const getInitials = (name: string): string => {
@@ -373,6 +424,7 @@ export default function GraphView() {
               width={graphBounds.maxX - graphBounds.minX}
               height={graphBounds.maxY - graphBounds.minY}
               viewBox={`${graphBounds.minX} ${graphBounds.minY} ${graphBounds.maxX - graphBounds.minX} ${graphBounds.maxY - graphBounds.minY}`}
+              onPress={() => {setHighlightedContacts([]); setHighlightedHashtags([]);}}
             >
               <G>
               {/* Draw links */}
@@ -468,7 +520,7 @@ export default function GraphView() {
                         textAnchor="middle"
                         alignmentBaseline="middle"
                       >
-                        #{node.name}
+                        {node.name}
                       </SvgText>
                     </G>
                   );
@@ -489,13 +541,6 @@ export default function GraphView() {
           )}
         </View>
       </GestureDetector>
-
-      {/* Instructions */}
-      <View style={styles.instructions}>
-        <Text style={styles.instructionsText}>
-          Pinch to zoom • Drag to pan • Tap contacts to view details
-        </Text>
-      </View>
     </View>
   );
 }
@@ -592,19 +637,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     fontWeight: '600',
-  },
-  instructions: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    paddingBottom: Platform.OS === 'ios' ? 34 : 12,
-  },
-  instructionsText: {
-    fontSize: 13,
-    color: '#666',
-    textAlign: 'center',
-  },
+  }
 });
 
