@@ -414,9 +414,9 @@ export default function GraphView() {
                         cx={node.x}
                         cy={node.y}
                         r="30"
-                        fill="#007AFF"
+                        fill="#5AC8FA"
                         stroke={highlightedContacts.some(c => c.id === node.contact?.id) ? "#FF0000" : "#fff"}
-                        strokeWidth="2"
+                        strokeWidth="5"
                         onPress={() => node.contact && handleContactPress(node.contact)}
                       />
                       <SvgText
