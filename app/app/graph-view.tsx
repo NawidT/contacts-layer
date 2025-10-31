@@ -20,7 +20,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide, SimulationNodeDatum, SimulationLinkDatum } from 'd3-force';
 import { Contact } from '../types/contact';
-import { mockContacts } from '../data/mockContacts';
+import { useContacts } from './_layout';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -38,7 +38,7 @@ interface GraphLink extends SimulationLinkDatum<GraphNode> {
 
 export default function GraphView() {
   const router = useRouter();
-  const [contacts, setContacts] = useState<Contact[]>([...mockContacts]);
+  const { contacts } = useContacts();
   const [highlightedHashtags, setHighlightedHashtags] = useState<string[]>([]);
   const [highlightedContacts, setHighlightedContacts] = useState<Contact[]>([]);
   const [hashtagToContacts, setHashtagToContacts] = useState<Map<string, Contact[]>>(new Map());
@@ -62,17 +62,26 @@ export default function GraphView() {
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
 
-  // Main background function, loads contacts and constructs graph 
+  // Main background function, constructs graph when contacts are loaded
   useEffect(() => {
-    loadContacts();
     if (contacts.length > 0) {
       buildGraph();
-    }
-    // center on the first contact
-    if (nodes.length > 0) {
-      centerOnNode(nodes[0]);
+      if (nodes.length > 0 && !firstBuild) {
+        let randomNode = nodes[Math.floor(Math.random() * nodes.length)];
+        let attempts = 0;
+        // Use a while loop to check for available x, y. Limit attempts to avoid infinite loop.
+        while ((nodes[attempts].x == null || nodes[attempts].y == null) && attempts < 10) {
+          attempts++;
+        }
+        if (attempts < 10) {
+          centerOnNode(nodes[attempts]);
+        } else {
+          console.log('No available nodes to center on');
+        }
+      }
     }
   }, []);
+
 
   // Secondary background function, creates hashtagToContacts
   useEffect(() => {
@@ -86,12 +95,6 @@ export default function GraphView() {
       setHashtagToContacts(newHashtagToContacts);
     }
   }, [firstBuild]);
-
-  const loadContacts = async () => {
-    // For now, just use mock contacts with their pre-defined hashtags
-    // Mock contacts already have hashtags, so no need to process them
-    console.log('Using mock contacts:', mockContacts.length);
-  };
 
   const buildGraph = async () => {
     setIsLoading(true);
@@ -114,6 +117,9 @@ export default function GraphView() {
 
         if (contact.hashtags) {
           contact.hashtags.forEach((tag) => hashtagSet.add(tag));
+        }
+        if (contacts.length % 5 === 0) {
+          console.log('We have processed ', contacts.length, ' contacts so far');
         }
       });
 
@@ -146,10 +152,10 @@ export default function GraphView() {
           'link',
           forceLink<GraphNode, GraphLink>(graphLinks)
             .id((d) => d.id)
-            .distance(100) // Distance between connected nodes
+            .distance(10) // Distance between connected nodes
             .strength(0.7) // Strength of link force (0-1)
         )
-        .force('charge', forceManyBody().strength(-300)) // Repulsion between nodes
+        .force('charge', forceManyBody().strength(-10)) // Repulsion between nodes
         .force('center', forceCenter(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)) // Center the graph
         .force('collision', forceCollide().radius(45)) // Prevent node overlap
         .stop(); // Don't run automatically
@@ -172,6 +178,7 @@ export default function GraphView() {
           maxY = Math.max(maxY, node.y);
         }
       });
+      console.log('Graph bounds: ', minX, minY, maxX, maxY);
 
       // Add padding
       const padding = 100;
@@ -180,6 +187,8 @@ export default function GraphView() {
       maxX += padding;
       maxY += padding;
 
+      console.log('Graph bounds with padding: ', minX, minY, maxX, maxY);
+
       // Update graph bounds
       setGraphBounds({ minX, minY, maxX, maxY });
 
@@ -187,6 +196,7 @@ export default function GraphView() {
       setNodes([...graphNodes]);
       setLinks(graphLinks);
       setIsLoading(false);
+      console.log('Graph loaded successfully');
     }, 50); // Small delay to allow UI to update
     setFirstBuild(true);
   };
@@ -226,7 +236,12 @@ export default function GraphView() {
   };
 
   const centerOnNode = (node: GraphNode) => {
+    if (node.x == null || node.y == null) {
+      console.log('Node has no x or y');
+      return;
+    }
     if (node.x != null && node.y != null) {
+      console.log('Centering on node: ', node.name);
       // Get current scale
       const currentScale = scale.value;
       
@@ -240,7 +255,6 @@ export default function GraphView() {
       
       // Calculate where we want the node to appear on screen
       // For X: center of screen width
-      console.log('SCREEN_WIDTH: ', SCREEN_WIDTH);
       const targetScreenX = SCREEN_WIDTH / 2;
       // For Y: center of the graph container (which excludes header, search bar)
       // The graph container fills the remaining space, so calculate its center

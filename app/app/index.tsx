@@ -6,102 +6,26 @@ import {
   FlatList,
   TextInput,
   TouchableOpacity,
-  Alert,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
-import * as Contacts from 'expo-contacts';
 import { useRouter } from 'expo-router';
 import { Contact } from '../types/contact';
-import { mockContacts } from '../data/mockContacts';
-import { rankingContacts, extractSimpleHashtags, getAITags } from '../utils/aiRankingContacts';
-import { initializeDatabase, getCachedContact } from '../utils/contactCache';
+import { rankingContacts } from '../utils/aiRankingContacts';
+import { useContacts } from './_layout';
 
 export default function Index() {
   const router = useRouter();
-  const [contacts, setContacts] = useState<Contact[]>([...mockContacts]);
+  const { contacts, isLoading } = useContacts();
   const [displayedContacts, setDisplayedContacts] = useState<Contact[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [hasPermission, setHasPermission] = useState(false);
   const [firstLoad, setFirstLoad] = useState(true);
 
   useEffect(() => {
-    // Initialize database on app load
-    initializeDatabase().catch(error => {
-      console.error('Failed to initialize database:', error);
-    });
-    
-    requestStoreContactsPermission();
-    // Handle fetching and processing contacts
-    if (hasPermission) {
-      fetchProcessContacts();
+    if (contacts.length > 0) {
       setDisplayedContacts(rankingContacts(contacts, ''));
     }
-  }, []);
-
-  const fetchProcessContacts = async () => {
-    const { data } = await Contacts.getContactsAsync({
-      fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers, Contacts.Fields.Emails],
-    });
-    const formattedContacts: Contact[] = await Promise.all(
-      data.map(async (contact) => {
-        const formattedContact: Contact = {
-          id: contact.id,
-          name: contact.name || 'Unknown', 
-          phoneNumber: contact.phoneNumbers?.[0]?.number || '',
-          email: contact.emails?.[0]?.email,
-        };
-
-        // Try to get cached data first
-        try {
-          const cachedData = await getCachedContact(
-            formattedContact.name,
-            formattedContact.phoneNumber
-          );
-          
-          if (cachedData) {
-            formattedContact.hashtags = cachedData.hashtags;
-            formattedContact.summary = cachedData.summary;
-            console.log(`Loaded cached data for ${formattedContact.name}`);
-          } else {
-            // No cache, extract hashtags and cache them
-            formattedContact.hashtags = extractSimpleHashtags(formattedContact);
-            console.log(`Generated hashtags for ${formattedContact.name}: ${formattedContact.hashtags?.join(', ')}`);
-          }
-        } catch (error) {
-          console.error(`Error processing contact ${formattedContact.name}:`, error);
-          // Fallback to simple extraction
-          formattedContact.hashtags = extractSimpleHashtags(formattedContact);
-        }
-
-        return formattedContact;
-      })
-    );
-    setContacts(formattedContacts);
-  };
-
-  const requestStoreContactsPermission = async () => {
-    try {
-      const { status } = await Contacts.requestPermissionsAsync();
-      if (status === 'granted') {
-        setHasPermission(true);
-        Alert.alert(
-          'Permission Granted',
-          'Contact permissions have been granted. Loading your contacts.'
-        );
-      } else {
-        Alert.alert(
-          'Permission Denied',
-          'Contact permissions were denied. Using pre-loaded contacts.'
-        );
-      }
-    } catch (error) {
-      console.error('Error requesting contacts permission:', error);
-      Alert.alert(
-        'Error',
-        'Failed to request contact permissions. Using pre-loaded contacts.'
-      );
-    }
-  };
+  }, [contacts]);
 
   const handleSearch = () => {
     if (firstLoad) {
@@ -140,6 +64,16 @@ export default function Index() {
       </View>
     </TouchableOpacity>
   );
+
+  // Show loading indicator while contacts are being loaded
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.loadingText}>Loading contacts...</Text>
+      </View>
+    );
+  }
 
   return firstLoad ? (
       <View style={styles.firstLoadContainer}>
@@ -211,6 +145,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+  },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '600',
   },
   firstLoadContainer: {
     flex: 1,

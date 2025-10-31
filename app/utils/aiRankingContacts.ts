@@ -261,7 +261,7 @@ Return only the summary text, nothing else.`;
  * Generously extracts hashtags from name, company, summary, and phone area code
  * Uses entity recognition and keyword extraction for comprehensive tagging
  */
-export function extractSimpleHashtags(contact: Contact): string[] {
+export function extractSimpleHashtags(contact: Contact, debug: boolean = false): string[] {
   const hashtagSet = new Set<string>();
   
   // Combine all available text for analysis
@@ -283,29 +283,34 @@ export function extractSimpleHashtags(contact: Contact): string[] {
       if (cleaned) hashtagSet.add(cleaned);
     });
     
-    // Extract people names (might include the contact's name or mentioned people)
-    const people = doc.people().out('array');
-    people.forEach((person: string) => {
-      const cleaned = person.toLowerCase().replace(/[^\w\s]/g, '').trim();
-      // Don't add single-word names that might be too generic
-      if (cleaned && cleaned.split(' ').length > 1) {
-        hashtagSet.add(cleaned.replace(/\s+/g, '_'));
-      }
-    });
-    
     // Extract places
     const places = doc.places().out('array');
     places.forEach((place: string) => {
       const cleaned = place.toLowerCase().replace(/[^\w\s]/g, '').trim();
-      if (cleaned) hashtagSet.add(cleaned.replace(/\s+/g, '_'));
+      if (cleaned) {
+        hashtagSet.add(cleaned.replace(/\s+/g, '_'));
+        debug && console.log('Added place: ', cleaned);
+      }
     });
+    
+    // Prepare name parts for filtering
+    const nameLower = contact.name.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const nameWords = nameLower.split(/\s+/);
     
     // Extract topics (nouns) - be generous
     const topics = doc.topics().out('array');
     topics.forEach((topic: string) => {
       const cleaned = topic.toLowerCase().replace(/[^\w\s]/g, '').trim();
-      if (cleaned && cleaned.length > 2) {
+      const cleanedWords = cleaned.split(/\s+/);
+      
+      // Check if this topic is the person's name or contains their name parts
+      const isPartOfName = cleaned === nameLower || 
+                          nameWords.some(nameWord => cleaned.includes(nameWord)) ||
+                          cleanedWords.every(word => nameWords.includes(word));
+      
+      if (cleaned && cleaned.length > 2 && !isPartOfName) {
         hashtagSet.add(cleaned.replace(/\s+/g, '_'));
+        debug && console.log('Added topic: ', cleaned);
       }
     });
     
@@ -313,10 +318,19 @@ export function extractSimpleHashtags(contact: Contact): string[] {
     const nouns = doc.nouns().out('array');
     nouns.forEach((noun: string) => {
       const cleaned = noun.toLowerCase().replace(/[^\w\s]/g, '').trim();
+      const cleanedWords = cleaned.split(/\s+/);
+      
       // Filter out very common/generic words
       const skipWords = ['contact', 'person', 'thing', 'someone', 'something', 'time', 'way'];
-      if (cleaned && cleaned.length > 2 && !skipWords.includes(cleaned)) {
+      
+      // Check if this noun is the person's name or contains their name parts
+      const isPartOfName = cleaned === nameLower || 
+                          nameWords.some(nameWord => cleaned.includes(nameWord)) ||
+                          cleanedWords.every(word => nameWords.includes(word));
+      
+      if (cleaned && cleaned.length > 2 && !skipWords.includes(cleaned) && !isPartOfName) {
         hashtagSet.add(cleaned.replace(/\s+/g, '_'));
+        debug && console.log('Added noun: ', cleaned);
       }
     });
     
@@ -327,6 +341,7 @@ export function extractSimpleHashtags(contact: Contact): string[] {
       const skipVerbs = ['is', 'am', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had'];
       if (cleaned && cleaned.length > 3 && !skipVerbs.includes(cleaned)) {
         hashtagSet.add(cleaned.replace(/\s+/g, '_'));
+        debug && console.log('Added verb: ', cleaned);
       }
     });
     
@@ -336,6 +351,7 @@ export function extractSimpleHashtags(contact: Contact): string[] {
       const cleaned = adj.toLowerCase().replace(/[^\w\s]/g, '').trim();
       if (cleaned && cleaned.length > 3) {
         hashtagSet.add(cleaned);
+        debug && console.log('Added adjective: ', cleaned);
       }
     });
   }
@@ -345,6 +361,7 @@ export function extractSimpleHashtags(contact: Contact): string[] {
     const companyClean = contact.company.toLowerCase().replace(/[^\w\s]/g, '').trim();
     if (companyClean) {
       hashtagSet.add(companyClean.replace(/\s+/g, '_'));
+      debug && console.log('Added company: ', companyClean);
     }
   }
   
@@ -356,12 +373,13 @@ export function extractSimpleHashtags(contact: Contact): string[] {
     'tesla', 'stripe', 'airbnb', 'uber', 'lyft', 'aws', 'openai', 'anthropic',
     'yc', 'y combinator', 'ycombinator', 'techstars', 'sequoia', 'a16z',
     'andreessen', 'twitter', 'x corp', 'linkedin', 'github', 'gitlab',
-    'shopify', 'spotify', 'slack', 'zoom', 'figma', 'notion', 'airtable'
+    'shopify', 'spotify', 'slack', 'zoom', 'figma', 'notion', 'airtable', 'gt'
   ];
   
   techCompanies.forEach(company => {
     if (combinedLower.includes(company)) {
       hashtagSet.add(company.replace(/\s+/g, '_'));
+      debug && console.log('Added tech company: ', company);
     }
   });
   
@@ -377,6 +395,7 @@ export function extractSimpleHashtags(contact: Contact): string[] {
   roles.forEach(role => {
     if (combinedLower.includes(role)) {
       hashtagSet.add(role.replace(/\s+/g, '_'));
+      debug && console.log('Added role: ', role);
     }
   });
   
@@ -392,6 +411,7 @@ export function extractSimpleHashtags(contact: Contact): string[] {
   contexts.forEach(context => {
     if (combinedLower.includes(context)) {
       hashtagSet.add(context);
+      debug && console.log('Added context: ', context);
     }
   });
   
@@ -435,6 +455,7 @@ export function extractSimpleHashtags(contact: Contact): string[] {
     
     if (areaCodeMap[areaCode]) {
       hashtagSet.add(areaCodeMap[areaCode]);
+      debug && console.log('Added area code: ', areaCodeMap[areaCode]);
     }
   }
   

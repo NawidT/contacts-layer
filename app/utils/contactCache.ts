@@ -1,5 +1,9 @@
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system';
+import { ChatOpenAI } from "@langchain/openai";
+import { RunnableSequence } from "@langchain/core/runnables";
+import { ChatPromptTemplate } from "@langchain/core/prompts";
+import { StringOutputParser } from "@langchain/core/output_parsers";
 
 /**
  * SQLite-based cache for storing contact summaries and hashtags
@@ -9,12 +13,33 @@ import * as FileSystem from 'expo-file-system';
 let db: SQLite.SQLiteDatabase | null = null;
 
 /**
+ * 
+ * 
+ * create the model needed for langchain calls
+ */
+
+let llm = new ChatOpenAI({
+  model: "gpt-3.5-turbo"
+})
+
+export async function testLLM(usermsg : string) : Promise<string> {
+  let prompt = ChatPromptTemplate.fromMessages([
+    ["system", "You are a helpful assistant."],
+    ["user", "{input}"]
+  ]);
+  let chain = prompt.pipe(llm).pipe(new StringOutputParser());
+  let result = await chain.invoke({input: usermsg});
+  return result as string;
+
+}
+
+/**
  * Initialize the SQLite database and create the cache table if it doesn't exist
  */
 export async function initializeDatabase(): Promise<void> {
   try {
     // Open or create the database
-    db = await SQLite.openDatabaseAsync('contactsCache.db');
+    db = await SQLite.openDatabaseAsync('contactsCache');
     
     // Create the cache table if it doesn't exist
     await db.execAsync(`
@@ -37,6 +62,9 @@ export async function initializeDatabase(): Promise<void> {
     `);
     
     console.log('Database initialized successfully');
+    console.log('DB Path: ', db.databasePath);
+    // print all elements in database
+    
   } catch (error) {
     console.error('Error initializing database:', error);
     throw error;
@@ -194,7 +222,7 @@ export async function clearCache(): Promise<void> {
   try {
     const database = await getDatabase();
     
-    await database.runAsync('DELETE FROM contact_cache');
+    await database.runAsync('TRUNCATE TABLE contact_cache');
     
     console.log('Cache cleared successfully');
   } catch (error) {
@@ -250,7 +278,8 @@ export async function getCacheStats(): Promise<{
     // Try to get database file size
     let dbSize: number | undefined;
     try {
-      const dbPath = `${process.cwd()}/SQLite/contactsCache.db`;
+      const dbPath = database.databasePath;
+      console.log('DB Path: ', dbPath);
       const fileInfo = new FileSystem.File(dbPath).info();
       if (fileInfo.exists) {
         dbSize = fileInfo.size;
