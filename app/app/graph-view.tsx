@@ -106,7 +106,7 @@ export default function GraphView() {
       const hashtagSet = new Set<string>();
 
       // Create contact nodes - let D3 calculate positions
-      contacts.forEach((contact) => {
+      contacts.forEach((contact, index) => {
         graphNodes.push({
           id: `contact-${contact.id}`,
           type: 'contact',
@@ -118,8 +118,8 @@ export default function GraphView() {
         if (contact.hashtags) {
           contact.hashtags.forEach((tag) => hashtagSet.add(tag));
         }
-        if (contacts.length % 5 === 0) {
-          console.log('We have processed ', contacts.length, ' contacts so far');
+        if ((index + 1) % 10 === 0) {
+          console.log('We have processed ', index + 1, ' contacts so far');
         }
       });
 
@@ -202,7 +202,7 @@ export default function GraphView() {
   };
 
   const handleContactPress = (contact: Contact) => {
-    console.log('handleContactPress for contact: ', contact.name);
+    console.log('handle contact press for contact: ', contact.name);
     // If contact is already selected, go to detail. Otherwise, highlight contact and their hashtags.
     if (highlightedContacts.some(c => c.id === contact.id)) {
       router.push({

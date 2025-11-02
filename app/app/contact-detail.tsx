@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Contact } from '../types/contact';
-import { setCachedContact } from '../utils/contactCache';
+import { setCachedContact } from '../utils/db';
 
 export default function ContactDetail() {
   const params = useLocalSearchParams();

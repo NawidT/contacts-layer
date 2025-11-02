@@ -1,9 +1,5 @@
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system';
-import { ChatOpenAI } from "@langchain/openai";
-import { RunnableSequence } from "@langchain/core/runnables";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
-import { StringOutputParser } from "@langchain/core/output_parsers";
 
 /**
  * SQLite-based cache for storing contact summaries and hashtags
@@ -12,26 +8,6 @@ import { StringOutputParser } from "@langchain/core/output_parsers";
 
 let db: SQLite.SQLiteDatabase | null = null;
 
-/**
- * 
- * 
- * create the model needed for langchain calls
- */
-
-let llm = new ChatOpenAI({
-  model: "gpt-3.5-turbo"
-})
-
-export async function testLLM(usermsg : string) : Promise<string> {
-  let prompt = ChatPromptTemplate.fromMessages([
-    ["system", "You are a helpful assistant."],
-    ["user", "{input}"]
-  ]);
-  let chain = prompt.pipe(llm).pipe(new StringOutputParser());
-  let result = await chain.invoke({input: usermsg});
-  return result as string;
-
-}
 
 /**
  * Initialize the SQLite database and create the cache table if it doesn't exist
@@ -89,7 +65,7 @@ export interface CachedContactData {
   hashtags?: string[];
 }
 
-/**
+/** 
  * Get cached data for a contact
  * @param name - Contact name
  * @param phoneNumber - Contact phone number
@@ -107,16 +83,18 @@ export async function getCachedContact(
       hashtags: string | null;
     }>(
       'SELECT summary, hashtags FROM contact_cache WHERE name = ? AND phone_number = ?',
-      [name, phoneNumber]
+      [name, phoneNumber ]
     );
-    
+
+     // handle when no rows are returned
     if (!result) {
+      console.log(`No cached data found for ${name} (${phoneNumber})`);
       return null;
     }
-    
+
     return {
       summary: result.summary || undefined,
-      hashtags: result.hashtags ? JSON.parse(result.hashtags) : undefined,
+      hashtags: result.hashtags ? result.hashtags.split(",") : undefined,
     };
   } catch (error) {
     console.error('Error getting cached contact:', error);
@@ -138,28 +116,22 @@ export async function setCachedContact(
   try {
     const database = await getDatabase();
     const now = Date.now();
-    const hashtagsJson = data.hashtags ? JSON.stringify(data.hashtags) : null;
+    const hashtagsList = data.hashtags ? data.hashtags.join(',') : "";
     
     // Use INSERT OR REPLACE to handle both inserts and updates
     await database.runAsync(
       `INSERT OR REPLACE INTO contact_cache 
        (name, phone_number, summary, hashtags, created_at, updated_at) 
-       VALUES (?, ?, ?, ?, 
-         COALESCE((SELECT created_at FROM contact_cache WHERE name = ? AND phone_number = ?), ?),
-         ?)`,
-      [
-        name,
-        phoneNumber,
-        data.summary || null,
-        hashtagsJson,
-        name,
-        phoneNumber,
-        now,
-        now,
-      ]
+       VALUES ($name, $phoneNumber, $summary, $hashtagsList, $now, $now)`,
+      { 
+        $name: name, 
+        $phoneNumber: phoneNumber, 
+        $summary: data.summary || null, 
+        $hashtagsList: hashtagsList, 
+        $now: now }
     );
     
-    console.log(`Cached data for ${name} (${phoneNumber})`);
+    console.log(`Cached data for ${name} (${phoneNumber ? phoneNumber : 'no phone number'})`);
   } catch (error) {
     console.error('Error setting cached contact:', error);
     throw error;
@@ -287,7 +259,15 @@ export async function getCacheStats(): Promise<{
     } catch (e) {
       console.log('Could not get database file size:', e);
     }
-    
+
+    // show a sample of the table (first 5 rows)
+    const sample = await database.getAllAsync<{ name: string, phone_number: string, summary: string, hashtags: string }>(
+      'SELECT * FROM contact_cache LIMIT 5'
+    );
+    sample.forEach(row => {
+      console.log(row);
+    });
+
     return {
       totalContacts: total?.count || 0,
       withSummary: withSummary?.count || 0,

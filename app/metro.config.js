@@ -1,4 +1,5 @@
 const { getDefaultConfig } = require('expo/metro-config');
+const path = require('path');
 
 /** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname);
@@ -8,6 +9,17 @@ config.resolver.assetExts.push('wasm');
 
 // Ensure .wasm files are treated as assets, not source files
 config.resolver.sourceExts = config.resolver.sourceExts.filter(ext => ext !== 'wasm');
+
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Handle uuid package for web
+  if (platform === 'web' && moduleName === 'uuid') {
+    return {
+      filePath: require.resolve('uuid'),
+      type: 'sourceFile',
+    };
+  }
+  return context.resolveRequest(context, moduleName, platform);
+};
 
 module.exports = config;
 

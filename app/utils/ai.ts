@@ -1,6 +1,51 @@
 import { Contact } from '../types/contact';
 import nlp from 'compromise';
-import { getCachedContact, setCachedContact } from './contactCache';
+import { ChatOpenAI } from '@langchain/openai';
+import { prompt_get_hashtags } from './prompts';
+import { z } from 'zod';
+import { getCachedContact, setCachedContact } from './db';
+// import { getCachedContact, setCachedContact } from './contactCache';
+
+
+/**
+ * 
+ * 
+ * create the model needed for openai api calls
+ */
+// function getOpenAIClient(): ChatOpenAI | OpenAI | null {
+//   let llm : ChatOpenAI | OpenAI | null;
+//   const apiKey = process.env.EXPO_OPENAI_API_KEY;
+//   try {
+//     llm = new ChatOpenAI({
+//       model: 'gpt-4o-mini',
+//       apiKey: apiKey
+//     })
+//   } catch (error) {
+//     console.error('Error creating OpenAI client:', error);
+//     llm = null;
+//   }
+//   // return llm;
+//   if (!llm) {
+//     if (!apiKey) {
+//       throw new Error('EXPO_OPENAI_API_KEY is not set. Please create a .env file with your OpenAI API key.');
+//     }
+//     llm = new OpenAI({
+//       apiKey: apiKey,
+//       dangerouslyAllowBrowser: true
+//     });
+//   }
+//   return llm;
+// }
+
+// const llm : ChatOpenAI | OpenAI | null = getOpenAIClient();
+const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
+if (!apiKey) {
+  throw new Error('EXPO_PUBLIC_OPENAI_API_KEY is not set. Please create a .env file with EXPO_PUBLIC_OPENAI_API_KEY=your_key');
+}
+const llm = new ChatOpenAI({
+  model: 'gpt-4o-mini',
+  apiKey: apiKey
+});
 
 /**
  * AI-based contact ranking algorithm (mock implementation using alphabetical ordering)
@@ -35,7 +80,6 @@ export function rankingContacts(contacts: Contact[], searchQuery: string): Conta
     a.name.localeCompare(b.name)
   );
 
-  // Return max 20 contacts
   return rankedContacts;
 }
 
@@ -46,213 +90,30 @@ export function rankingContacts(contacts: Contact[], searchQuery: string): Conta
  * @param contact - Contact to extract hashtags from
  * @returns Contact with hashtags populated
  */
-export async function getAITags(contact: Contact): Promise<Contact> {
-  // Return cached hashtags if already in memory
-  if (contact.hashtags && contact.hashtags.length > 0) {
-    return contact;
-  }
-
-  // Check SQLite cache first
-  try {
-    const cachedData = await getCachedContact(contact.name, contact.phoneNumber);
-    if (cachedData?.hashtags && cachedData.hashtags.length > 0) {
-      console.log(`Using cached hashtags for ${contact.name}`);
-      contact.hashtags = cachedData.hashtags;
-      if (cachedData.summary) {
-        contact.summary = cachedData.summary;
-      }
-      return contact;
-    }
-  } catch (error) {
-    console.error('Error checking cache for hashtags:', error);
-  }
-
-  // Check if API key is available
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || apiKey === 'your_openai_api_key_here') {
-    console.log('No OpenAI API key found, using fallback hashtag extraction');
-    contact.hashtags = extractSimpleHashtags(contact);
-    
-    // Cache the fallback hashtags
-    try {
-      await setCachedContact(contact.name, contact.phoneNumber, {
-        hashtags: contact.hashtags,
-        summary: contact.summary,
-      });
-    } catch (error) {
-      console.error('Error caching fallback hashtags:', error);
-    }
-    
-    return contact;
-  }
-
-  try {
-    const nameParts = contact.name.split(' ');
-    const firstName = nameParts[0] || '';
-    const lastName = nameParts.slice(1).join(' ') || '';
-
-    const prompt = `Given a contact name, extract relevant hashtags, focusing on:
-- Company names (e.g., #google, #meta, #airbnb)
-- Job roles (e.g., #engineer, #pm, #designer)
-- Places or events (e.g., #conference, #hackathon, #ycombinator)
-- Professional or personal context (e.g., #friend, #startup, #linkedin)
-- Where they're from based off area code in their phone number e.g. 404 is #atlanta
-
-Return 2-6 descriptive hashtags (just the hashtags, comma-separated), all lowercase, based on the following contact:
-
-Contact name: ${firstName} ${lastName}
-Contact phone number: ${contact.phoneNumber || ''}
-Contact email: ${contact.email || ''}`;
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        temperature: 0,
-      }),
+export async function ai_hashtags_generation(contact: Contact): Promise<string[]> {
+  try { 
+    const name = contact.name ? contact.name : '';
+    const phoneNumber = contact.phoneNumber ? contact.phoneNumber : '';
+    const email = contact.email ? contact.email : '';
+    const summary = contact.summary ? contact.summary : '';
+    const preExistingHashtags = contact.hashtags ? contact.hashtags : [];
+    const prompt = prompt_get_hashtags(name, phoneNumber, email, summary, preExistingHashtags);
+    const schema = z.object({
+      hashtags: z.array(z.string()).describe('The hashtags for the contact'),
     });
-
-    if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const result = data.choices[0]?.message?.content || '';
-    
-    // Parse comma-separated hashtags
-    contact.hashtags = result
-      .split(',')
-      .map((tag: string) => tag.trim())
-      .filter((tag: string) => tag.length > 0);
-
-    console.log(`Hashtags for ${contact.name}:`, contact.hashtags);
-    
-    // Cache the AI-generated hashtags
-    try {
-      await setCachedContact(contact.name, contact.phoneNumber, {
-        hashtags: contact.hashtags,
-        summary: contact.summary,
-      });
-    } catch (error) {
-      console.error('Error caching AI hashtags:', error);
-    }
-    
-    return contact;
-  } catch (error) {
-    console.error('Error extracting hashtags with AI:', error);
-    // Fallback to simple extraction
-    contact.hashtags = extractSimpleHashtags(contact);
-    
-    // Cache the fallback hashtags
-    try {
-      await setCachedContact(contact.name, contact.phoneNumber, {
-        hashtags: contact.hashtags,
-        summary: contact.summary,
-      });
-    } catch (error) {
-      console.error('Error caching fallback hashtags:', error);
-    }
-    
-    return contact;
-  }
-}
-
-/**
- * Generate AI summary for a contact using OpenAI API with SQLite caching
- * 
- * @param contact - Contact to generate summary for
- * @returns Contact with summary populated
- */
-export async function getAISummary(contact: Contact): Promise<Contact> {
-  // Return cached summary if already in memory
-  if (contact.summary && contact.summary.trim().length > 0) {
-    return contact;
-  }
-
-  // Check SQLite cache first
-  try {
-    const cachedData = await getCachedContact(contact.name, contact.phoneNumber);
-    if (cachedData?.summary && cachedData.summary.trim().length > 0) {
-      console.log(`Using cached summary for ${contact.name}`);
-      contact.summary = cachedData.summary;
-      if (cachedData.hashtags) {
-        contact.hashtags = cachedData.hashtags;
-      }
-      return contact;
-    }
-  } catch (error) {
-    console.error('Error checking cache for summary:', error);
-  }
-
-  // Check if API key is available
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || apiKey === 'your_openai_api_key_here') {
-    console.log('No OpenAI API key found, skipping summary generation');
-    return contact;
-  }
-
-  try {
-    const prompt = `Generate a brief, one-line summary (max 80 characters) for this contact. Focus on their role, company, or relationship context if available:
-
-Contact name: ${contact.name}
-Phone number: ${contact.phoneNumber || ''}
-Email: ${contact.email || ''}
-Company: ${contact.company || ''}
-
-Return only the summary text, nothing else.`;
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        temperature: 0.3,
-        max_tokens: 50,
-      }),
+    const llm_with_schema = llm.withStructuredOutput(schema);
+    const response = await prompt.pipe(llm_with_schema).invoke({
+      preExistingHashtags,
+      name,
+      phoneNumber,
+      email,
+      summary,
     });
-
-    if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    contact.summary = data.choices[0]?.message?.content?.trim() || '';
-
-    console.log(`Generated summary for ${contact.name}: ${contact.summary}`);
-    
-    // Cache the AI-generated summary
-    try {
-      await setCachedContact(contact.name, contact.phoneNumber, {
-        summary: contact.summary,
-        hashtags: contact.hashtags,
-      });
-    } catch (error) {
-      console.error('Error caching AI summary:', error);
-    }
-    
-    return contact;
+    console.log('Hashtags generated');
+    return response.hashtags;
   } catch (error) {
-    console.error('Error generating summary with AI:', error);
-    return contact;
+    console.error('Error generating hashtags:', error);
+    return [];
   }
 }
 
@@ -261,7 +122,7 @@ Return only the summary text, nothing else.`;
  * Generously extracts hashtags from name, company, summary, and phone area code
  * Uses entity recognition and keyword extraction for comprehensive tagging
  */
-export function extractSimpleHashtags(contact: Contact, debug: boolean = false): string[] {
+export function extract_simple_hashtags(contact: Contact, debug: boolean = false): string[] {
   const hashtagSet = new Set<string>();
   
   // Combine all available text for analysis
@@ -468,4 +329,36 @@ export function extractSimpleHashtags(contact: Contact, debug: boolean = false):
   return hashtags.length > 0 ? hashtags : [];
 }
 
-
+export async function extract_complex_hashtags(contact: Contact): Promise<string[]> {
+  let cached_hashtags: string[] = [];
+  // try to get cached hashtags
+  try {
+    const cached_contact = await getCachedContact(contact.name, contact.phoneNumber);
+    if (cached_contact && cached_contact.hashtags) {
+      cached_hashtags = cached_contact.hashtags;
+    }
+  } catch (error) {
+    console.error('Error getting cached hashtags:', error);
+  }
+  // if cached hashtags are found, return them
+  if (cached_hashtags.length > 0) {
+    console.log(`Using cached hashtags for ${contact.name}: ${cached_hashtags.join(', ')}`);
+    return cached_hashtags;
+  } else { // if no cached hashtags are found, extract hashtags using NLP and AI
+    let simple_hashtags: string[] = [];
+    let ai_hashtags: string[] = [];
+    try {
+      simple_hashtags = extract_simple_hashtags(contact);
+      if (simple_hashtags.length > 0) {
+        contact.hashtags = simple_hashtags;
+      }
+      ai_hashtags = await ai_hashtags_generation(contact);
+    }
+    catch (error) {
+      ai_hashtags = simple_hashtags;
+    }
+    setCachedContact(contact.name, contact.phoneNumber, { hashtags: ai_hashtags });
+    console.log(`Cached hashtags for ${contact.name}: ${ai_hashtags.join(', ')}`);
+    return ai_hashtags;
+  }
+}

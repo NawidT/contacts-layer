@@ -1,3 +1,6 @@
+// Must be imported first to polyfill crypto.getRandomValues()
+import 'react-native-get-random-values';
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Stack } from "expo-router";
 import { LogBox, Alert } from 'react-native';
@@ -5,9 +8,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Contacts from 'expo-contacts';
 import { Contact } from '../types/contact';
 import { mockContacts } from '../data/mockContacts';
-import { extractSimpleHashtags } from '../utils/aiRankingContacts';
-import { initializeDatabase, getCachedContact, getCacheStats, testLLM } from '../utils/contactCache';
-import { Platform } from 'react-native';
+import { extract_complex_hashtags } from '../utils/ai';
+import { initializeDatabase, getCachedContact, getCacheStats } from '../utils/db';
 
 // Optionally ignore specific warnings during development
 LogBox.ignoreAllLogs(false);
@@ -47,30 +49,6 @@ export default function RootLayout() {
     try {
       await initializeDatabase();
       console.log('Database initialized successfully');
-      
-      // Expose database to console for debugging (web only)
-      if (Platform.OS === 'web') {
-        const SQLite = require('expo-sqlite');
-        const db = await SQLite.openDatabaseAsync('contactsCache.db');
-        (window as any).__expo_sqlite_db = db;
-        (window as any).queryDB = async (sql: string) => {
-          try {
-            const result = await db.getAllAsync(sql);
-            console.log(`📊 Query: ${sql}`);
-            console.log(`Found ${result.length} rows:`);
-            console.table(result);
-            return result;
-          } catch (error) {
-            console.error('Query error:', error);
-            return [];
-          }
-        };
-        console.log('✅ Database exposed to console. Use: queryDB("SELECT * FROM contact_cache")');
-        (window as any).testLLM = async (usermsg: string) => {
-          return await testLLM(usermsg);
-        };
-        console.log('✅ LLM exposed to console. Use: testLLM("Hello, how are you?")');
-      }
     } catch (error) {
       console.error('Failed to initialize database:', error);
     }
@@ -116,10 +94,10 @@ export default function RootLayout() {
       const { data } = await Contacts.getContactsAsync({
         fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers, Contacts.Fields.Emails, Contacts.Fields.ID],
       });
-      const limitedData = data.slice(0, 40);
+      const limitedData = data.slice(0, 15);
 
       const formattedContacts: Contact[] = await Promise.all(
-        limitedData.map(async (contact, index) => {
+        limitedData.map(async (contact) => {
           const formattedContact: Contact = {
             id: contact.id,
             name: contact.name || 'Unknown',
@@ -140,13 +118,11 @@ export default function RootLayout() {
               console.log(`Loaded cached data for ${formattedContact.name}`);
             } else {
               // No cache, extract hashtags
-              formattedContact.hashtags = extractSimpleHashtags(formattedContact);
+              formattedContact.hashtags = await extract_complex_hashtags(formattedContact);
               formattedContact.hashtags.length > 0 && console.log(`Generated hashtags for ${formattedContact.name}: ${formattedContact.hashtags?.join(', ')}`);
             }
           } catch (error) {
             console.error(`Error processing contact ${formattedContact.name}:`, error);
-            // Fallback to simple extraction
-            formattedContact.hashtags = extractSimpleHashtags(formattedContact);
           }
           return formattedContact;
         })

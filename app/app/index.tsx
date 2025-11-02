@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Contact } from '../types/contact';
-import { rankingContacts } from '../utils/aiRankingContacts';
+import { rankingContacts } from '../utils/ai';
 import { useContacts } from './_layout';
 
 export default function Index() {
